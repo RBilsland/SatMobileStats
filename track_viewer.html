@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Route Playback</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,500;0,9..40,700;1,9..40,500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <style>
+    :root {
+      --ink: #e8eef5;
+      --muted: #9aabbd;
+      --panel: rgba(10, 18, 28, 0.82);
+      --panel-border: rgba(180, 210, 240, 0.18);
+      --accent: #3ddc97;
+      --accent-dim: #1f8f6a;
+      --trail: #5ec8ff;
+      --route: rgba(94, 200, 255, 0.35);
+      --asterisk: #f4b942;
+      --asterisk-dim: rgba(244, 185, 66, 0.85);
+      --depart: #ff7a59;
+      --danger: #ff6b6b;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      font-family: "DM Sans", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 700px at 10% -10%, #1b3a4f 0%, transparent 55%),
+        radial-gradient(900px 600px at 90% 110%, #143028 0%, transparent 50%),
+        #071018;
+    }
+
+    #map {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+    }
+
+    .overlay-right {
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      z-index: 1000;
+      width: min(300px, calc(100vw - 36px));
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .overlay-top,
+    .overlay-charts {
+      padding: 16px 18px;
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow);
+    }
+
+    .overlay-top h1 {
+      margin: 0 0 4px;
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .overlay-top p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.35;
+    }
+
+    .overlay-charts {
+      display: grid;
+      gap: 14px;
+    }
+
+    .chart {
+      min-width: 0;
+    }
+
+    .chart-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .chart-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .chart-icon {
+      width: 15px;
+      height: 15px;
+      flex: 0 0 auto;
+      color: var(--trail);
+      opacity: 0.9;
+    }
+
+    .chart-icon.satellite {
+      color: var(--asterisk);
+    }
+
+    .chart-title {
+      margin: 0;
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .chart-value {
+      margin: 0;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.9rem;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+
+    .chart-canvas-wrap {
+      position: relative;
+      height: 72px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.03);
+      overflow: hidden;
+    }
+
+    .chart-canvas-wrap canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .overlay-bottom {
+      position: absolute;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      z-index: 1000;
+      width: min(920px, calc(100vw - 24px));
+      padding: 14px 16px 12px;
+      border: 1px solid var(--panel-border);
+      border-radius: 18px;
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow);
+    }
+
+    .time-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    .time-row strong {
+      color: var(--ink);
+      font-weight: 500;
+    }
+
+    .timeline-wrap {
+      position: relative;
+      margin-top: 2px;
+      padding: 4px 0 8px;
+      cursor: ew-resize;
+      user-select: none;
+      touch-action: none;
+    }
+
+    .timeline-rail {
+      position: relative;
+      height: 10px;
+      margin-bottom: 5px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      overflow: visible;
+    }
+
+    .timeline-rail:last-of-type {
+      margin-bottom: 0;
+    }
+
+    .asterisk-seg {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #ffd56a, var(--asterisk));
+      box-shadow: 0 0 10px rgba(244, 185, 66, 0.35);
+      pointer-events: none;
+    }
+
+    .away-seg {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #ff9b7a, var(--depart));
+      box-shadow: 0 0 10px rgba(255, 122, 89, 0.35);
+      pointer-events: none;
+    }
+
+    .timeline-playhead {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      margin-left: -1px;
+      background: var(--accent);
+      box-shadow: 0 0 0 1px rgba(4, 20, 14, 0.55), 0 0 12px rgba(61, 220, 151, 0.55);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .timeline-playhead::after {
+      content: "";
+      position: absolute;
+      top: -3px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 2px solid #fff;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    }
+
+    #scrubber {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .timeline-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin: 0 0 8px;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .timeline-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      display: inline-block;
+    }
+
+    .swatch.asterisk { background: var(--asterisk); }
+    .swatch.track { background: var(--trail); }
+    .swatch.depart { background: var(--depart); }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    button, select {
+      font: inherit;
+      border: 1px solid var(--panel-border);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--ink);
+      padding: 8px 14px;
+      cursor: pointer;
+    }
+
+    button:hover, select:hover {
+      border-color: rgba(61, 220, 151, 0.55);
+    }
+
+    button.primary {
+      background: linear-gradient(180deg, var(--accent), var(--accent-dim));
+      color: #04140e;
+      border-color: transparent;
+      font-weight: 700;
+      min-width: 96px;
+    }
+
+    button:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+
+    label.follow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-left: auto;
+    }
+
+    .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 10px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .stats span b {
+      color: var(--ink);
+      font-weight: 500;
+    }
+
+    .leaflet-control-attribution {
+      background: rgba(7, 16, 24, 0.7) !important;
+      color: var(--muted) !important;
+    }
+
+    .leaflet-control-attribution a { color: var(--trail) !important; }
+
+    .marker-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 2px solid #fff;
+      box-shadow: 0 0 0 6px rgba(61, 220, 151, 0.25), 0 8px 18px rgba(0,0,0,0.35);
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="overlay-right">
+    <div class="overlay-top">
+      <h1>Route playback</h1>
+      <p id="summary">Loading track…</p>
+    </div>
+    <div class="overlay-charts">
+      <div class="chart" id="chartMobile">
+        <div class="chart-head">
+          <div class="chart-label">
+            <svg class="chart-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M4 16h2.2v4H4v-4zm4.6-4h2.2v8H8.6v-8zm4.6-4h2.2v12h-2.2V8zM18 4h2.2v16H18V4z"/>
+            </svg>
+            <p class="chart-title">Mobile signal</p>
+          </div>
+          <p class="chart-value" id="mobileValue">—</p>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="mobileCanvas" width="280" height="72"></canvas>
+        </div>
+      </div>
+      <div class="chart" id="chartSatellite">
+        <div class="chart-head">
+          <div class="chart-label">
+            <svg class="chart-icon satellite" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M8.7 2.3a1 1 0 0 1 1.4 0l2.1 2.1 1.5-1.5a1 1 0 1 1 1.4 1.4L13.6 5.8l4.6 4.6 1.5-1.5a1 1 0 1 1 1.4 1.4l-1.5 1.5 2.1 2.1a1 1 0 0 1-1.4 1.4l-2.1-2.1-7.7 7.7a3.5 3.5 0 0 1-4.95-4.95l7.7-7.7-2.1-2.1a1 1 0 0 1 0-1.4zm.85 14.85a1.5 1.5 0 1 0-2.12-2.12 1.5 1.5 0 0 0 2.12 2.12zM4.2 19.1a1 1 0 0 1 1.4 0c1.7 1.7 3.9 2.2 5.4 2.2a1 1 0 1 1 0 2c-2 0-4.8-.6-7-2.8a1 1 0 0 1 .2-1.4z"/>
+            </svg>
+            <p class="chart-title">Satellite signal</p>
+          </div>
+          <p class="chart-value" id="satelliteValue">—</p>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="satelliteCanvas" width="280" height="72"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay-bottom">
+    <div class="time-row">
+      <span>Current <strong id="currentTime">—</strong></span>
+      <span id="rangeLabel">—</span>
+    </div>
+    <div class="timeline-legend">
+      <span><i class="swatch track"></i> Track</span>
+      <span><i class="swatch asterisk"></i> Asterisk coverage</span>
+      <span><i class="swatch depart"></i> Away from landing site</span>
+      <span id="asteriskStatus">Asterisk: —</span>
+    </div>
+    <div class="timeline-wrap" id="timelineWrap" title="Drag to scrub">
+      <div id="awayRail" class="timeline-rail" aria-label="Away from landing site"></div>
+      <div id="asteriskRail" class="timeline-rail" aria-label="Asterisk coverage"></div>
+      <div id="timelinePlayhead" class="timeline-playhead" aria-hidden="true"></div>
+      <input id="scrubber" type="range" min="0" max="1000" value="0" step="1" tabindex="-1" aria-hidden="true" />
+    </div>
+    <div class="controls">
+      <button id="stepBackBtn" type="button" title="Step back one point" aria-label="Step back">◀</button>
+      <button id="playBtn" class="primary" type="button">Play</button>
+      <button id="stepFwdBtn" type="button" title="Step forward one point" aria-label="Step forward">▶</button>
+      <button id="resetBtn" type="button">Reset</button>
+      <label>
+        Playback
+        <select id="speed">
+          <option value="1">Real time</option>
+          <option value="60" selected>60×</option>
+          <option value="120">120×</option>
+        </select>
+      </label>
+      <label class="follow">
+        <input id="follow" type="checkbox" checked />
+        Follow marker
+      </label>
+    </div>
+    <div class="stats">
+      <span>Point <b id="pointIndex">0</b></span>
+      <span>Drone <b id="droneSpeed">—</b></span>
+      <span>Progress <b id="progressPct">0%</b></span>
+      <span>Position <b id="latlon">—</b></span>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="./track_points.js"></script>
+  <script>
+    (function () {
+      const data = window.TRACK_DATA;
+      if (!data || !data.points || !data.points.length) {
+        document.getElementById("summary").textContent =
+          "No track data. Run: python3 make_track_viewer.py";
+        return;
+      }
+
+      const points = data.points;
+      const startMs = points[0].ts;
+      const endMs = points[points.length - 1].ts;
+      const durationMs = Math.max(endMs - startMs, 1);
+
+      const asteriskSegments = data.asterisk_segments || [];
+
+      const summary = document.getElementById("summary");
+      summary.textContent =
+        `${data.count.toLocaleString()} points · ${data.start.replace("T", " ").replace("Z", " UTC")}` +
+        ` → ${data.end.replace("T", " ").replace("Z", " UTC")}` +
+        (asteriskSegments.length
+          ? ` · ${asteriskSegments.length} Asterisk segments`
+          : "");
+
+      document.getElementById("rangeLabel").textContent =
+        `${data.start.slice(11, 19)} → ${data.end.slice(11, 19)} UTC`;
+
+      const awayRail = document.getElementById("awayRail");
+      const asteriskRail = document.getElementById("asteriskRail");
+      const timelineWrap = document.getElementById("timelineWrap");
+      const timelinePlayhead = document.getElementById("timelinePlayhead");
+      const asteriskStatus = document.getElementById("asteriskStatus");
+      const awaySegments = data.away_segments || [];
+
+      function placeSegment(rail, className, seg, title) {
+        const left = ((seg.start_ts - startMs) / durationMs) * 100;
+        const right = ((seg.end_ts - startMs) / durationMs) * 100;
+        const width = Math.max(right - left, 0.2);
+        if (right < 0 || left > 100) return;
+        const el = document.createElement("div");
+        el.className = className;
+        el.style.left = `${Math.max(left, 0)}%`;
+        el.style.width = `${Math.min(width, 100 - Math.max(left, 0))}%`;
+        el.title = title;
+        rail.appendChild(el);
+      }
+
+      awayRail.innerHTML = "";
+      asteriskRail.innerHTML = "";
+      for (const seg of awaySegments) {
+        placeSegment(
+          awayRail,
+          "away-seg",
+          seg,
+          `Away from landing site ${seg.start} → ${seg.end}`
+        );
+      }
+      for (const seg of asteriskSegments) {
+        placeSegment(
+          asteriskRail,
+          "asterisk-seg",
+          seg,
+          `${seg.session || "asterisk"} ${seg.start} → ${seg.end}`
+        );
+      }
+
+      function asteriskAt(ms) {
+        for (const seg of asteriskSegments) {
+          if (ms >= seg.start_ts && ms <= seg.end_ts) return seg;
+        }
+        return null;
+      }
+
+      const signals = data.signals || [];
+      const mobileCanvas = document.getElementById("mobileCanvas");
+      const satelliteCanvas = document.getElementById("satelliteCanvas");
+      const mobileValue = document.getElementById("mobileValue");
+      const satelliteValue = document.getElementById("satelliteValue");
+      const mobileCtx = mobileCanvas.getContext("2d");
+      const satelliteCtx = satelliteCanvas.getContext("2d");
+
+      let signalIndex = -1;
+      const CHART_WINDOW_MS = 5 * 60 * 1000; // show last 5 minutes, scrolling
+
+      const brmMax = Math.max(
+        60,
+        ...signals.map((s) => (typeof s.brm === "number" ? s.brm : 0))
+      );
+
+      function seekSignalIndex(ms) {
+        if (!signals.length) {
+          signalIndex = -1;
+          return;
+        }
+        while (signalIndex + 1 < signals.length && signals[signalIndex + 1].ts <= ms) {
+          signalIndex += 1;
+        }
+        while (signalIndex >= 0 && signals[signalIndex].ts > ms) {
+          signalIndex -= 1;
+        }
+      }
+
+      function heldSeries(key, endMs) {
+        const startWindow = endMs - CHART_WINDOW_MS;
+        const series = [];
+        let held = null;
+        for (let i = 0; i < signals.length; i += 1) {
+          const sample = signals[i];
+          if (sample.ts > endMs) break;
+          const raw = sample[key];
+          if (typeof raw === "number" && raw !== 0) held = raw;
+          if (sample.ts >= startWindow && held != null) {
+            series.push({ ts: sample.ts, value: held });
+          }
+        }
+        return { series, held };
+      }
+
+      function resizeChart(canvas) {
+        const wrap = canvas.parentElement;
+        const dpr = window.devicePixelRatio || 1;
+        const width = Math.max(wrap.clientWidth, 1);
+        const height = Math.max(wrap.clientHeight, 1);
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+        const ctx = canvas.getContext("2d");
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        return { width, height, ctx };
+      }
+
+      function drawChart(
+        canvas,
+        series,
+        endMs,
+        yMin,
+        yMax,
+        color,
+        valueEl,
+        held,
+        unitText,
+        tickText
+      ) {
+        const { width, height, ctx } = resizeChart(canvas);
+        ctx.clearRect(0, 0, width, height);
+
+        const leftPad = 34;
+        const rightPad = 4;
+        const topPad = 8;
+        const bottomPad = 8;
+        const plotLeft = leftPad;
+        const plotRight = width - rightPad;
+        const plotTop = topPad;
+        const plotBottom = height - bottomPad;
+        const plotWidth = Math.max(plotRight - plotLeft, 1);
+        const plotHeight = Math.max(plotBottom - plotTop, 1);
+        const span = Math.max(yMax - yMin, 1e-6);
+
+        function yFor(value) {
+          return plotBottom - ((value - yMin) / span) * plotHeight;
+        }
+
+        // vertical scale ticks + labels
+        const ticks = [yMax, (yMin + yMax) / 2, yMin];
+        ctx.font = "10px 'IBM Plex Mono', monospace";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        for (const tick of ticks) {
+          const y = yFor(tick);
+          ctx.strokeStyle = "rgba(255,255,255,0.10)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(plotLeft, y);
+          ctx.lineTo(plotRight, y);
+          ctx.stroke();
+
+          ctx.fillStyle = "rgba(154,171,189,0.95)";
+          ctx.fillText(tickText(tick), plotLeft - 6, y);
+        }
+
+        // now marker on the right edge of the plot
+        ctx.strokeStyle = "rgba(255,255,255,0.28)";
+        ctx.beginPath();
+        ctx.moveTo(plotRight - 0.5, plotTop);
+        ctx.lineTo(plotRight - 0.5, plotBottom);
+        ctx.stroke();
+
+        if (!series.length) {
+          valueEl.textContent = "—";
+          return;
+        }
+
+        const startWindow = endMs - CHART_WINDOW_MS;
+        const coords = series.map((point) => {
+          const x =
+            plotLeft + ((point.ts - startWindow) / CHART_WINDOW_MS) * plotWidth;
+          return [x, yFor(point.value)];
+        });
+
+        // soft fill under the line
+        ctx.beginPath();
+        coords.forEach(([x, y], idx) => {
+          if (idx === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        const lastX = coords[coords.length - 1][0];
+        const firstX = coords[0][0];
+        ctx.lineTo(lastX, plotBottom);
+        ctx.lineTo(firstX, plotBottom);
+        ctx.closePath();
+        if (color === "#3ddc97") ctx.fillStyle = "rgba(61,220,151,0.22)";
+        else ctx.fillStyle = "rgba(94,200,255,0.22)";
+        ctx.fill();
+
+        ctx.beginPath();
+        coords.forEach(([x, y], idx) => {
+          if (idx === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2.5;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.stroke();
+
+        // current point
+        const [lx, ly] = coords[coords.length - 1];
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(lx, ly, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        valueEl.textContent = held == null ? "—" : unitText(held);
+      }
+
+      function updateCharts(ms) {
+        seekSignalIndex(ms);
+        const mobile = heldSeries("lq", ms);
+        const satellite = heldSeries("brm", ms);
+
+        drawChart(
+          mobileCanvas,
+          mobile.series,
+          ms,
+          0,
+          100,
+          "#5ec8ff",
+          mobileValue,
+          mobile.held,
+          (v) => `${v.toFixed(0)}%`,
+          (v) => `${Math.round(v)}%`
+        );
+        drawChart(
+          satelliteCanvas,
+          satellite.series,
+          ms,
+          0,
+          brmMax,
+          "#3ddc97",
+          satelliteValue,
+          satellite.held,
+          (v) => `${v.toFixed(2)} dBHz`,
+          (v) => `${Math.round(v)}`
+        );
+      }
+
+      const map = L.map("map", { zoomControl: true, attributionControl: true });
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 19,
+      }).addTo(map);
+
+      const latLngs = points.map((p) => [p.lat, p.lon]);
+      const fullRoute = L.polyline(latLngs, {
+        color: "#5ec8ff",
+        opacity: 0.55,
+        weight: 3,
+        lineJoin: "round",
+        lineCap: "round",
+        smoothFactor: 2.5,
+      }).addTo(map);
+
+      const travelled = L.polyline([], {
+        color: "#3ddc97",
+        opacity: 0.95,
+        weight: 4,
+        lineJoin: "round",
+        lineCap: "round",
+        smoothFactor: 2.5,
+      }).addTo(map);
+
+      map.fitBounds(fullRoute.getBounds(), { padding: [40, 40] });
+
+      const markerIcon = L.divIcon({
+        className: "",
+        html: '<div class="marker-dot"></div>',
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+      });
+      const marker = L.marker(latLngs[0], { icon: markerIcon }).addTo(map);
+
+      L.circleMarker(latLngs[0], {
+        radius: 6,
+        color: "#3ddc97",
+        fillColor: "#3ddc97",
+        fillOpacity: 0.9,
+        weight: 2,
+      }).bindTooltip("Start").addTo(map);
+
+      L.circleMarker(latLngs[latLngs.length - 1], {
+        radius: 6,
+        color: "#ff6b6b",
+        fillColor: "#ff6b6b",
+        fillOpacity: 0.9,
+        weight: 2,
+      }).bindTooltip("End").addTo(map);
+
+      const scrubber = document.getElementById("scrubber");
+      const playBtn = document.getElementById("playBtn");
+      const stepBackBtn = document.getElementById("stepBackBtn");
+      const stepFwdBtn = document.getElementById("stepFwdBtn");
+      const resetBtn = document.getElementById("resetBtn");
+      const speedSel = document.getElementById("speed");
+      const followChk = document.getElementById("follow");
+      const currentTimeEl = document.getElementById("currentTime");
+      const pointIndexEl = document.getElementById("pointIndex");
+      const droneSpeedEl = document.getElementById("droneSpeed");
+      const progressPctEl = document.getElementById("progressPct");
+      const latlonEl = document.getElementById("latlon");
+
+      let playing = false;
+      let currentMs = startMs;
+      let raf = null;
+      let lastFrame = null;
+
+      function formatUtc(ms) {
+        return new Date(ms).toISOString().replace("T", " ").replace(".000Z", " UTC");
+      }
+
+      function findSegment(ms) {
+        let lo = 0;
+        let hi = points.length - 1;
+        if (ms <= points[0].ts) return { i: 0, t: 0 };
+        if (ms >= points[hi].ts) return { i: hi - 1, t: 1 };
+        while (lo < hi - 1) {
+          const mid = (lo + hi) >> 1;
+          if (points[mid].ts <= ms) lo = mid;
+          else hi = mid;
+        }
+        const a = points[lo];
+        const b = points[hi];
+        const span = Math.max(b.ts - a.ts, 1);
+        return { i: lo, t: (ms - a.ts) / span };
+      }
+
+      function lerp(a, b, t) {
+        return a + (b - a) * t;
+      }
+
+      function haversineM(lat1, lon1, lat2, lon2) {
+        const radius = 6371000;
+        const toRad = Math.PI / 180;
+        const p1 = lat1 * toRad;
+        const p2 = lat2 * toRad;
+        const dPhi = (lat2 - lat1) * toRad;
+        const dLambda = (lon2 - lon1) * toRad;
+        const h =
+          Math.sin(dPhi / 2) ** 2 +
+          Math.cos(p1) * Math.cos(p2) * Math.sin(dLambda / 2) ** 2;
+        return 2 * radius * Math.asin(Math.sqrt(h));
+      }
+
+      function speedAt(index) {
+        if (index <= 0) index = 1;
+        if (index >= points.length) index = points.length - 1;
+        const prev = points[index - 1];
+        const curr = points[index];
+        const dt = Math.max((curr.ts - prev.ts) / 1000, 1e-3);
+        return haversineM(prev.lat, prev.lon, curr.lat, curr.lon) / dt;
+      }
+
+      function formatSpeed(mps) {
+        if (!Number.isFinite(mps)) return "—";
+        const kmh = mps * 3.6;
+        return `${mps.toFixed(1)} m/s · ${kmh.toFixed(0)} km/h`;
+      }
+
+      function setTime(ms, fromUser) {
+        currentMs = Math.min(Math.max(ms, startMs), endMs);
+        const { i, t } = findSegment(currentMs);
+        const a = points[i];
+        const b = points[Math.min(i + 1, points.length - 1)];
+        const lat = lerp(a.lat, b.lat, t);
+        const lon = lerp(a.lon, b.lon, t);
+
+        marker.setLatLng([lat, lon]);
+        travelled.setLatLngs(latLngs.slice(0, i + 1).concat([[lat, lon]]));
+
+        const progress = (currentMs - startMs) / durationMs;
+        timelinePlayhead.style.left = `${progress * 100}%`;
+        if (!fromUser) {
+          scrubber.value = String(Math.round(progress * 1000));
+        }
+
+        const pointNumber = t >= 0.5 && i + 1 < points.length ? i + 2 : i + 1;
+        const speedMps = speedAt(t >= 0.5 ? Math.min(i + 1, points.length - 1) : i);
+        currentTimeEl.textContent = formatUtc(currentMs);
+        pointIndexEl.textContent = `${pointNumber} / ${points.length}`;
+        droneSpeedEl.textContent = formatSpeed(speedMps);
+        progressPctEl.textContent = `${(progress * 100).toFixed(1)}%`;
+        latlonEl.textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+
+        const ast = asteriskAt(currentMs);
+        if (ast) {
+          asteriskStatus.textContent = `Asterisk: ${ast.session || "yes"} (${ast.start.slice(11, 19)}–${ast.end.slice(11, 19)})`;
+          asteriskStatus.style.color = "var(--asterisk)";
+        } else {
+          asteriskStatus.textContent = "Asterisk: none at this time";
+          asteriskStatus.style.color = "var(--muted)";
+        }
+
+        updateCharts(currentMs);
+        stepBackBtn.disabled = pointNumber <= 1;
+        stepFwdBtn.disabled = pointNumber >= points.length;
+
+        if (followChk.checked) {
+          map.panTo([lat, lon], { animate: false });
+        }
+
+        if (currentMs >= endMs && playing) {
+          stopPlayback();
+        }
+      }
+
+      function nearestPointIndex(ms) {
+        const { i, t } = findSegment(ms);
+        if (t >= 0.5 && i + 1 < points.length) return i + 1;
+        return i;
+      }
+
+      function stepPoint(delta) {
+        stopPlayback();
+        const next = Math.min(
+          Math.max(nearestPointIndex(currentMs) + delta, 0),
+          points.length - 1
+        );
+        setTime(points[next].ts, true);
+      }
+
+      function effectiveSpeed() {
+        const value = speedSel.value;
+        if (value === "fit") {
+          const targetMs = 90_000;
+          return durationMs / targetMs;
+        }
+        return Number(value);
+      }
+
+      function frame(now) {
+        if (!playing) return;
+        if (lastFrame == null) lastFrame = now;
+        const dt = now - lastFrame;
+        lastFrame = now;
+        setTime(currentMs + dt * effectiveSpeed(), false);
+        raf = requestAnimationFrame(frame);
+      }
+
+      function startPlayback() {
+        if (currentMs >= endMs) setTime(startMs, false);
+        playing = true;
+        playBtn.textContent = "Pause";
+        lastFrame = null;
+        raf = requestAnimationFrame(frame);
+      }
+
+      function stopPlayback() {
+        playing = false;
+        playBtn.textContent = "Play";
+        if (raf) cancelAnimationFrame(raf);
+        raf = null;
+        lastFrame = null;
+      }
+
+      playBtn.addEventListener("click", () => {
+        if (playing) stopPlayback();
+        else startPlayback();
+      });
+
+      stepBackBtn.addEventListener("click", () => stepPoint(-1));
+      stepFwdBtn.addEventListener("click", () => stepPoint(1));
+
+      window.addEventListener("keydown", (event) => {
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        const tag = (event.target && event.target.tagName) || "";
+        if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          stepPoint(-1);
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          stepPoint(1);
+        }
+      });
+
+      resetBtn.addEventListener("click", () => {
+        stopPlayback();
+        signalIndex = -1;
+        setTime(startMs, false);
+        map.fitBounds(fullRoute.getBounds(), { padding: [40, 40] });
+      });
+
+      scrubber.addEventListener("input", () => {
+        const ms = startMs + (Number(scrubber.value) / 1000) * durationMs;
+        setTime(ms, true);
+      });
+
+      function msFromTimelinePointer(event) {
+        const rect = timelineWrap.getBoundingClientRect();
+        const x = Math.min(Math.max(event.clientX - rect.left, 0), rect.width);
+        return startMs + (x / Math.max(rect.width, 1)) * durationMs;
+      }
+
+      let scrubbing = false;
+      timelineWrap.addEventListener("pointerdown", (event) => {
+        if (event.button != null && event.button !== 0) return;
+        scrubbing = true;
+        timelineWrap.setPointerCapture(event.pointerId);
+        stopPlayback();
+        setTime(msFromTimelinePointer(event), true);
+      });
+      timelineWrap.addEventListener("pointermove", (event) => {
+        if (!scrubbing) return;
+        setTime(msFromTimelinePointer(event), true);
+      });
+      timelineWrap.addEventListener("pointerup", () => {
+        scrubbing = false;
+      });
+      timelineWrap.addEventListener("pointercancel", () => {
+        scrubbing = false;
+      });
+
+      speedSel.addEventListener("change", () => {
+        // Speed takes effect on the next animation frame.
+      });
+
+      setTime(startMs, false);
+    })();
+  </script>
+</body>
+</html>
