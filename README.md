@@ -4,9 +4,7 @@ Local analysis and map playback for a satellite/mobile drone test over public ma
 
 ## Live viewer
 
-After GitHub Pages is enabled, open:
-
-`https://<user>.github.io/SatMobileStats/`
+https://rbilsland.github.io/SatMobileStats/
 
 Or open `track_viewer.html` locally (needs `track_points.js` beside it).
 
